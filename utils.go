@@ -121,7 +121,7 @@ func FindMethods(pkg *packages.Package, structName string, importStore *ImportSt
 			}
 
 			//paramTypeName = types.TypeString(param.Type(), types.RelativeTo(pkg.Types))
-			typeName := getTypeName(param.Type(), importStore)
+			typeName := getTypeName(param.Type(), pkg.Types.Path(), importStore)
 			if j == params.Len()-1 && sig.Variadic() {
 				// If the last parameter is variadic, remove the [] prefix
 				typeName = strings.TrimPrefix(typeName, "[]")
@@ -140,7 +140,7 @@ func FindMethods(pkg *packages.Package, structName string, importStore *ImportSt
 		for j := 0; j < results.Len(); j++ {
 			result := results.At(j)
 			m.Results = append(m.Results, Result{
-				Type: getTypeName(result.Type(), importStore),
+				Type: getTypeName(result.Type(), pkg.Types.Path(), importStore),
 			})
 		}
 
@@ -178,8 +178,9 @@ func IdentifiableTypeName(typ string) string { // pure helper
 	return typ
 }
 
-// getTypeName 从 types.Type 变量中提取类型名 (pkgName.typeName)。
-func getTypeName(typ types.Type, importStore *ImportStore) string {
+// getTypeName 从 types.Type 变量中提取类型名 (pkgName.typeName)
+// 如果类型定义在 currentPkgPath, 则省略包名。
+func getTypeName(typ types.Type, currentPkgPath string, importStore *ImportStore) string {
 	var typeName string
 	// 具名类型 (Named type)，唯一有显式包名的情况。
 	if named, ok := typ.(*types.Named); ok {
@@ -190,8 +191,10 @@ func getTypeName(typ types.Type, importStore *ImportStore) string {
 			// Package() 返回定义这个类型的包，如果类型是预声明的（如 int），则为 nil
 			if obj.Pkg() != nil {
 				packagePath := obj.Pkg().Path() // 包的导入路径 (例如 "fmt", "main")
-				pkgName := importStore.AddImport(packagePath)
-				typeName = pkgName + "." + typeName
+				if packagePath != currentPkgPath {
+					pkgName := importStore.AddImport(packagePath)
+					typeName = pkgName + "." + typeName
+				}
 			}
 		}
 		return typeName
@@ -210,24 +213,24 @@ func getTypeName(typ types.Type, importStore *ImportStore) string {
 		// 指针类型 (*int, *MyStruct)
 		// 类型名是 "ptrTo" + 元素类型名
 		// 如果需要更精确的表示，可以递归调用 getPackageAndTypeName(t.Elem())
-		elemTypeName := getTypeName(t.Elem(), importStore)
+		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = "*" + elemTypeName
 	case *types.Slice:
 		// 切片类型 ([]int, []MyStruct)
-		elemTypeName := getTypeName(t.Elem(), importStore)
+		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = "[]" + elemTypeName
 	case *types.Array:
 		// 数组类型 ([N]int, [N]MyStruct)
-		elemTypeName := getTypeName(t.Elem(), importStore)
+		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = fmt.Sprintf("[%d]%s", t.Len(), elemTypeName)
 	case *types.Map:
 		// 映射类型 (map[string]int)
-		keyTypeName := getTypeName(t.Key(), importStore)
-		elemTypeName := getTypeName(t.Elem(), importStore)
+		keyTypeName := getTypeName(t.Key(), currentPkgPath, importStore)
+		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = fmt.Sprintf("map[%s]%s", keyTypeName, elemTypeName)
 	case *types.Chan:
 		// 通道类型 (chan int, chan<- bool)
-		elemTypeName := getTypeName(t.Elem(), importStore)
+		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		dir := ""
 		switch t.Dir() {
 		case types.SendRecv:
