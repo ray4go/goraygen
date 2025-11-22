@@ -12,14 +12,13 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/bytedance/gg/gmap"
 	"github.com/bytedance/gg/gslice"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
 
 const (
-	workspaceRepo     = "github.com/ray4go/go-ray"
+	goRayRepo         = "github.com/ray4go/go-ray/ray"
 	raytasksComment   = "// raytasks"
 	rayactorsComment  = "// rayactors"
 	generatedFileName = "ray_workload_wrappers.go"
@@ -54,15 +53,17 @@ type Generator struct {
 	tasks          []Method
 	actorFactories []Method
 	actor2Methods  map[string][]Method // key is actor type name (Method.Name in actorFactories)
-	imports        map[string]struct{}
+	importStore    *ImportStore
 
 	typeConstraints *ParameterTypeConstraints
 }
 
 func NewGenerator() *Generator {
+	is := NewImportStore()
+	is.AddImport(goRayRepo)
 	return &Generator{
 		actor2Methods:   make(map[string][]Method),
-		imports:         make(map[string]struct{}),
+		importStore:     is,
 		typeConstraints: &ParameterTypeConstraints{type2ConstraintId: make(map[string]int)},
 	}
 }
@@ -111,21 +112,17 @@ func (g *Generator) collectWorkloads() {
 	// tasks
 	if s := FindStruct(g.pkg, raytasksComment); s != nil {
 		fmt.Printf("Found raytasks struct: %s\n", s.Name.Name)
-		var imports_ map[string]struct{}
-		g.tasks, imports_ = FindMethods(g.pkg, s.Name.Name)
-		g.imports = gmap.Merge(g.imports, imports_)
+		g.tasks = FindMethods(g.pkg, s.Name.Name, g.importStore)
 	} else {
 		fmt.Printf("No struct with '%s' comment found\n", raytasksComment)
 	}
 	// actors
 	if s := FindStruct(g.pkg, rayactorsComment); s != nil {
 		fmt.Printf("Found rayactors struct: %s\n", s.Name.Name)
-		var imports_ map[string]struct{}
-		g.actorFactories, imports_ = FindMethods(g.pkg, s.Name.Name)
+		g.actorFactories = FindMethods(g.pkg, s.Name.Name, g.importStore)
 		g.actorFactories = gslice.Filter(g.actorFactories, func(m Method) bool {
 			return len(m.Results) > 0
 		})
-		g.imports = gmap.Merge(g.imports, imports_)
 	} else {
 		fmt.Printf("No struct with '%s' comment found\n", rayactorsComment)
 	}
@@ -138,8 +135,7 @@ func (g *Generator) collectActorMethods() {
 		}
 		actorTypeName := actorFactory.Results[0].Type
 		actorName := strings.TrimPrefix(actorTypeName, "*")
-		actorMethods, extraImports := FindMethods(g.pkg, actorName)
-		g.imports = gmap.Merge(g.imports, extraImports)
+		actorMethods := FindMethods(g.pkg, actorName, g.importStore)
 		fmt.Printf("Actor '%s' find %d methods\n", actorName, len(actorMethods))
 		g.actor2Methods[actorFactory.Name] = actorMethods
 	}
@@ -149,7 +145,14 @@ func (g *Generator) generateCode() string {
 	var buf bytes.Buffer
 	buf.WriteString(packageCommentsTPL)
 	fmt.Fprintf(&buf, "package %s\n\n", g.pkg.Name)
-	writeImports(&buf, g.imports)
+
+	// deterministic order for stable diffs
+	importList := g.importStore.DumpImportExprs()
+	sort.Strings(importList)
+	fmt.Fprintf(&buf, `import ( 
+		. "%s/generic" 
+		%s
+	)`, goRayRepo, strings.Join(importList, "\n\t"))
 
 	for _, m := range g.tasks {
 		generateWrapperFunction(taskDefTpl, &buf, m, g.typeConstraints, "")
@@ -182,23 +185,6 @@ func (g *Generator) write(code, packagePath string) error {
 	}
 	fmt.Printf("Generated wrapper code is written to: %s\n", outputFile)
 	return nil
-}
-
-func writeImports(buf *bytes.Buffer, importSet map[string]struct{}) {
-	importSet[fmt.Sprintf(`"%s/ray"`, workspaceRepo)] = struct{}{}
-	importSet[fmt.Sprintf(`. "%s/ray/generic"`, workspaceRepo)] = struct{}{}
-	if len(importSet) == 0 {
-		return
-	}
-	// deterministic order for stable diffs
-	importList := gmap.Keys(importSet)
-	sort.Strings(importList)
-
-	fmt.Fprintf(buf, "import (\n")
-	for _, imp := range importList {
-		fmt.Fprintf(buf, "\t%s\n", imp)
-	}
-	fmt.Fprintf(buf, ")\n\n")
 }
 
 type ParameterTypeConstraints struct {

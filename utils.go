@@ -60,39 +60,28 @@ type Method struct {
 
 type Param struct {
 	Name string
-	Type string
+	Type string // in "$packageName.$typeName" or built-in type like "int", "string" or composite type like "[]int", "map[string]pkg.MyType"
 }
 
 type Result struct {
-	Type string
+	Type string // format same as Param.Type
 }
 
 // FindMethods finds all exported methods of the given struct name in the package.
-// It returns a slice of Method and a map of required imports.
-// issue: can't handle import conflict (different packages with the same name)
-func FindMethods(pkg *packages.Package, structName string) ([]Method, map[string]struct{}) {
+func FindMethods(pkg *packages.Package, structName string, importStore *ImportStore) []Method {
 	var methods []Method
 
 	// Get the struct type
 	obj := pkg.Types.Scope().Lookup(structName)
 	if obj == nil {
-		return methods, nil
+		return methods
 	}
 
 	named, ok := obj.Type().(*types.Named)
 	if !ok {
-		return methods, nil
+		return methods
 	}
 
-	imports := make(map[string]struct{})
-	getTypeName := func(typ types.Type) string {
-		pkgPath, typeName := getPackageAndTypeName(typ)
-		if pkgPath != pkg.Types.Path() && len(pkgPath) > 0 {
-			imports[fmt.Sprintf(`"%s"`, pkgPath)] = struct{}{}
-			typeName = fmt.Sprintf("%s.%s", getPackageName(pkgPath), typeName)
-		}
-		return typeName
-	}
 	// Iterate through all methods
 	for i := 0; i < named.NumMethods(); i++ {
 		method := named.Method(i)
@@ -132,7 +121,7 @@ func FindMethods(pkg *packages.Package, structName string) ([]Method, map[string
 			}
 
 			//paramTypeName = types.TypeString(param.Type(), types.RelativeTo(pkg.Types))
-			typeName := getTypeName(param.Type())
+			typeName := getTypeName(param.Type(), importStore)
 			if j == params.Len()-1 && sig.Variadic() {
 				// If the last parameter is variadic, remove the [] prefix
 				typeName = strings.TrimPrefix(typeName, "[]")
@@ -151,30 +140,48 @@ func FindMethods(pkg *packages.Package, structName string) ([]Method, map[string
 		for j := 0; j < results.Len(); j++ {
 			result := results.At(j)
 			m.Results = append(m.Results, Result{
-				Type: getTypeName(result.Type()),
+				Type: getTypeName(result.Type(), importStore),
 			})
 		}
 
 		methods = append(methods, m)
 	}
 
-	return methods, imports
+	return methods
 }
 
-func getPackageName(importPath string) string {
-	sep := "/"
-	lastIndex := strings.LastIndex(importPath, sep)
-	if lastIndex == -1 {
-		// If separator not found, return the original string as the only element
-		return importPath
+// 将 Go 类型名转换为更友好的标识符名称
+// 例如：[]T -> sliceOfT; *T -> pointerOfT; map[K]V -> mapK2V; [n]T -> arrNT; ...
+var (
+	arrayRegex = regexp.MustCompile(`\[(\d+)\]`)
+	mapRegex   = regexp.MustCompile(`map\[([^\]]+)\](.*)`)
+	cleanRegex = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+)
+
+func IdentifiableTypeName(typ string) string { // pure helper
+	typ = strings.ReplaceAll(typ, "*", "pointerOf")
+	typ = strings.ReplaceAll(typ, "[]", "sliceOf")
+	typ = arrayRegex.ReplaceAllString(typ, "arr${1}Of")   // [n]T -> arrNT
+	typ = mapRegex.ReplaceAllString(typ, "map${1}To${2}") // map[K]V -> mapKToV
+	typ = strings.ReplaceAll(typ, "chan<-", "sendChanOf")
+	typ = strings.ReplaceAll(typ, "<-chan", "recvChanOf")
+	typ = strings.ReplaceAll(typ, "chan ", "chanOf")
+	if strings.HasPrefix(typ, "func(") {
+		typ = strings.ReplaceAll(typ, "func(", "funcWith")
+		typ = strings.ReplaceAll(typ, ")", "")
 	}
-	return importPath[lastIndex+len(sep):]
+	typ = strings.ReplaceAll(typ, "interface{}", "any") // interface{} -> any
+	typ = strings.ReplaceAll(typ, " ", "_")
+	typ = strings.ReplaceAll(typ, ".", "_")
+	// only keep alphanumeric + '_' chars
+	typ = cleanRegex.ReplaceAllString(typ, "")
+	return typ
 }
 
-// getPackageAndTypeName 从 types.Type 变量中提取导入名和类型名。
-// 返回 (import导入名, 类型名)。如果类型没有显式的导入名（例如基本类型或复合类型），导入名将为空字符串。
-func getPackageAndTypeName(typ types.Type) (packagePath string, typeName string) {
-	// 首先检查是否是具名类型 (Named type)，这是最常见的情况，也是唯一有显式包名的情况。
+// getTypeName 从 types.Type 变量中提取类型名 (pkgName.typeName)。
+func getTypeName(typ types.Type, importStore *ImportStore) string {
+	var typeName string
+	// 具名类型 (Named type)，唯一有显式包名的情况。
 	if named, ok := typ.(*types.Named); ok {
 		obj := named.Obj() // 获取定义这个具名类型的 *types.TypeName 对象
 		if obj != nil {
@@ -182,43 +189,45 @@ func getPackageAndTypeName(typ types.Type) (packagePath string, typeName string)
 			typeName = obj.Name()
 			// Package() 返回定义这个类型的包，如果类型是预声明的（如 int），则为 nil
 			if obj.Pkg() != nil {
-				packagePath = obj.Pkg().Path() // 包的导入路径 (例如 "fmt", "main")
+				packagePath := obj.Pkg().Path() // 包的导入路径 (例如 "fmt", "main")
+				pkgName := importStore.AddImport(packagePath)
+				typeName = pkgName + "." + typeName
 			}
 		}
-		return packagePath, typeName
+		return typeName
 	}
 
-	// 接下来处理其他类型的 *types.Type，它们本身没有包名，但有类型名。
+	// 其他类型的 *types.Type，它们本身没有包名，但有类型名。
 	// 对于这些类型，packagePath 将为空字符串。
 	switch t := typ.(type) {
 	case *types.Basic:
 		// 基本类型 (int, string, bool 等)
 		typeName = t.Name()
 		if t.Kind() == types.UnsafePointer {
-			packagePath = "unsafe"
+			typeName = importStore.AddImport("unsafe") + "." + typeName
 		}
 	case *types.Pointer:
 		// 指针类型 (*int, *MyStruct)
 		// 类型名是 "ptrTo" + 元素类型名
 		// 如果需要更精确的表示，可以递归调用 getPackageAndTypeName(t.Elem())
-		_, elemTypeName := getPackageAndTypeName(t.Elem())
+		elemTypeName := getTypeName(t.Elem(), importStore)
 		typeName = "*" + elemTypeName
 	case *types.Slice:
 		// 切片类型 ([]int, []MyStruct)
-		_, elemTypeName := getPackageAndTypeName(t.Elem())
+		elemTypeName := getTypeName(t.Elem(), importStore)
 		typeName = "[]" + elemTypeName
 	case *types.Array:
 		// 数组类型 ([N]int, [N]MyStruct)
-		_, elemTypeName := getPackageAndTypeName(t.Elem())
+		elemTypeName := getTypeName(t.Elem(), importStore)
 		typeName = fmt.Sprintf("[%d]%s", t.Len(), elemTypeName)
 	case *types.Map:
 		// 映射类型 (map[string]int)
-		_, keyTypeName := getPackageAndTypeName(t.Key())
-		_, elemTypeName := getPackageAndTypeName(t.Elem())
+		keyTypeName := getTypeName(t.Key(), importStore)
+		elemTypeName := getTypeName(t.Elem(), importStore)
 		typeName = fmt.Sprintf("map[%s]%s", keyTypeName, elemTypeName)
 	case *types.Chan:
 		// 通道类型 (chan int, chan<- bool)
-		_, elemTypeName := getPackageAndTypeName(t.Elem())
+		elemTypeName := getTypeName(t.Elem(), importStore)
 		dir := ""
 		switch t.Dir() {
 		case types.SendRecv:
@@ -248,33 +257,5 @@ func getPackageAndTypeName(typ types.Type) (packagePath string, typeName string)
 		typeName = typ.String()
 	}
 
-	return packagePath, typeName
-}
-
-// 将 Go 类型名转换为更友好的标识符名称
-// 例如：[]T -> sliceOfT; *T -> pointerOfT; map[K]V -> mapK2V; [n]T -> arrNT; ...
-var (
-	arrayRegex = regexp.MustCompile(`\[(\d+)\]`)
-	mapRegex   = regexp.MustCompile(`map\[([^\]]+)\](.*)`)
-	cleanRegex = regexp.MustCompile(`[^a-zA-Z0-9_]`)
-)
-
-func IdentifiableTypeName(typ string) string { // pure helper
-	typ = strings.ReplaceAll(typ, "*", "pointerOf")
-	typ = strings.ReplaceAll(typ, "[]", "sliceOf")
-	typ = arrayRegex.ReplaceAllString(typ, "arr${1}Of")   // [n]T -> arrNT
-	typ = mapRegex.ReplaceAllString(typ, "map${1}To${2}") // map[K]V -> mapKToV
-	typ = strings.ReplaceAll(typ, "chan<-", "sendChanOf")
-	typ = strings.ReplaceAll(typ, "<-chan", "recvChanOf")
-	typ = strings.ReplaceAll(typ, "chan ", "chanOf")
-	if strings.HasPrefix(typ, "func(") {
-		typ = strings.ReplaceAll(typ, "func(", "funcWith")
-		typ = strings.ReplaceAll(typ, ")", "")
-	}
-	typ = strings.ReplaceAll(typ, "interface{}", "any") // interface{} -> any
-	typ = strings.ReplaceAll(typ, " ", "_")
-	typ = strings.ReplaceAll(typ, ".", "_")
-	// only keep alphanumeric + '_' chars
-	typ = cleanRegex.ReplaceAllString(typ, "")
-	return typ
+	return typeName
 }
