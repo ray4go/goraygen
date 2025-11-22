@@ -77,7 +77,7 @@ var res int
 err := obj.GetInto(&res)
 
 // Using goraygen generated wrapper
-counter := Counter(1).Remote()
+counter := NewCounter(1).Remote()
 future := Counter_Incr(counter, 2).Remote()
 res, err := future.Get()
 ```
