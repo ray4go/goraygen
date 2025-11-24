@@ -56,6 +56,7 @@ type Method struct {
 	Params       []Param // for variadic, the last param.Type will be the slice element type (i.e. "int" for "...int")
 	Results      []Result
 	IsVariadic   bool
+	Doc          string
 }
 
 type Param struct {
@@ -92,6 +93,7 @@ func FindMethods(pkg *packages.Package, structName string, importStore *ImportSt
 		sig := method.Type().(*types.Signature)
 		m := Method{
 			Name: method.Name(),
+			Doc:  findFuncDoc(pkg, method.Pos()),
 		}
 		// fmt.Printf("method: %v Name: %v\n", method, method.Pkg())
 		// fmt.Printf("sig.Recv: %v \n", sig.Recv())
@@ -261,4 +263,36 @@ func getTypeName(typ types.Type, currentPkgPath string, importStore *ImportStore
 	}
 
 	return typeName
+}
+
+func findFuncDoc(pkg *packages.Package, pos token.Pos) string {
+	for _, file := range pkg.Syntax {
+		if file.Pos() <= pos && pos < file.End() {
+			var doc string
+			found := false
+			ast.Inspect(file, func(n ast.Node) bool {
+				if found {
+					return false
+				}
+				if fd, ok := n.(*ast.FuncDecl); ok {
+					if fd.Name.Pos() == pos {
+						if fd.Doc != nil {
+							var comments []string
+							for _, c := range fd.Doc.List {
+								comments = append(comments, c.Text)
+							}
+							doc = strings.Join(comments, "\n")
+						}
+						found = true
+						return false
+					}
+				}
+				return true
+			})
+			if found {
+				return doc
+			}
+		}
+	}
+	return ""
 }

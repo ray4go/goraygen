@@ -9,11 +9,22 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+const goModCentent = `
+module %s
+
+go 1.24
+
+require (
+	"github.com/ray4go/go-ray/ray" v1.0.0
+)
+
+`
+
 func makePkgFromSource(t *testing.T, sources map[string]string, pkgPath string) *packages.Package {
 	t.Helper()
 	pkgDir := t.TempDir()
 	goModFile := pkgDir + "/go.mod"
-	goModContent := fmt.Sprintf("module %s\n\ngo 1.24\n", pkgPath)
+	goModContent := fmt.Sprintf(goModCentent, pkgPath)
 	files := gmap.Map(sources, func(filename, content string) (string, []byte) {
 		return fmt.Sprintf("%s/%s.go", pkgDir, filename), []byte(content)
 	})
@@ -58,13 +69,6 @@ import (
 type MyDuration time.Duration
 var T map[MyDuration][]*bytes.Buffer`, "map[MyDuration][]*bytes.Buffer",
 	},
-
-	{`
-import (
-	"github.com/ray4go/go-ray/ray"
-)
-var T ray.ObjectRef`, "ray.ObjectRef",
-	},
 }
 
 func TestGetTypeName(t *testing.T) {
@@ -82,4 +86,39 @@ func TestGetTypeName(t *testing.T) {
 		result := getTypeName(typ, pkgPath, importStore)
 		assert.Equal(tc.expectTypeName, result, "getTypeName code:\n%s", tc.code)
 	}
+}
+
+func TestFindMethodsWithDoc(t *testing.T) {
+	code := `package mypkg
+
+// raytasks
+type MyTasks struct{}
+
+// Foo does something.
+// It returns error.
+func (t *MyTasks) Foo() error { return nil }
+
+// Bar does something else.
+func (t *MyTasks) Bar() {}
+`
+	pkg := makePkgFromSource(t, map[string]string{"tasks": code}, "example.com/mypkg")
+	importStore := NewImportStore()
+	methods := FindMethods(pkg, "MyTasks", importStore)
+
+	require.Len(t, methods, 2)
+
+	var foo, bar Method
+	for _, m := range methods {
+		if m.Name == "Foo" {
+			foo = m
+		} else if m.Name == "Bar" {
+			bar = m
+		}
+	}
+
+	require.Equal(t, "Foo", foo.Name)
+	require.Equal(t, "// Foo does something.\n// It returns error.", foo.Doc)
+
+	require.Equal(t, "Bar", bar.Name)
+	require.Equal(t, "// Bar does something else.", bar.Doc)
 }

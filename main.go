@@ -220,6 +220,7 @@ func (t *ParameterTypeConstraints) String() string {
 	}
 */
 const taskDefTpl = `
+{{.Doc}}
 func {{.FuncName}} {{.TypeConstraints}} ( {{.ParamList}} ) *RemoteFunc[*Future{{.ResLen}}{{.ResTypes}}] {
 	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original task
 	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}})
@@ -240,6 +241,7 @@ func (actor *Actor{{.ActorName}}) Kill(options ...*ray.RayOption) error {
 `
 
 const actorMethodDefTpl = `
+{{.Doc}}
 func {{.ActorName}}_{{.FuncName}} {{.TypeConstraints}} (_actor *Actor{{.ActorName}}, {{.ParamList}}) *RemoteFunc[*Future{{.ResLen}}{{.ResTypes}}] {
 	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original actor method
 	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}}, (*ray.ActorHandle)(_actor))
@@ -256,6 +258,7 @@ type FuncDef struct {
 	ReceiverType    string
 
 	ActorName string // only for actor def
+	Doc       string
 }
 
 func generateWrapperFunction(tpl string, buf *bytes.Buffer, method Method, paramTypeMapper *ParameterTypeConstraints, actorName string) {
@@ -308,6 +311,7 @@ func generateWrapperFunction(tpl string, buf *bytes.Buffer, method Method, param
 		ArgsStatement:   argsStatement,
 		ReceiverType:    method.ReceiverType,
 		ActorName:       actorName,
+		Doc:             method.Doc,
 	}
 
 	tmpl, err := template.New("funcDef").Parse(tpl)
