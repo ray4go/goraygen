@@ -228,15 +228,13 @@ func {{.FuncName}} {{.TypeConstraints}} ( {{.ParamList}} ) *RemoteFunc[*Future{{
 `
 
 const actorDefTpl = `
-type Actor{{.ActorName}} ray.ActorHandle
-
-func New{{.FuncName}} {{.TypeConstraints}} ( {{.ParamList}} ) *RemoteActor[*Actor{{.ActorName}}] {
-	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original actor constructor
-	return NewRemoteActor[*Actor{{.ActorName}}]("{{.FuncName}}", {{.ArgsStatement}})
+type Actor{{.ActorName}} struct {
+	ray.ActorHandle
 }
 
-func (actor *Actor{{.ActorName}}) Kill(options ...*ray.RayOption) error {
-	return ((*ray.ActorHandle)(actor)).Kill(options...)
+func New{{.ActorName}}{{.TypeConstraints}}({{.ParamList}}) *RemoteActor[Actor{{.ActorName}}] {
+	_ = (actors).{{.ActorName}} // help you to findStruct the original actor constructor
+	return NewRemoteActor[Actor{{.ActorName}}]("{{.ActorName}}", {{.ArgsStatement}})
 }
 `
 
@@ -244,7 +242,7 @@ const actorMethodDefTpl = `
 {{.Doc}}
 func {{.ActorName}}_{{.FuncName}} {{.TypeConstraints}} (_actor *Actor{{.ActorName}}, {{.ParamList}}) *RemoteFunc[*Future{{.ResLen}}{{.ResTypes}}] {
 	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original actor method
-	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}}, (*ray.ActorHandle)(_actor))
+	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}}, &_actor.ActorHandle)
 }
 `
 
