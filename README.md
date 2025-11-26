@@ -31,10 +31,10 @@ Annotate your Ray tasks and actor factories with special comments:
 
 ```go
 // raytasks
-type tasks struct{}
+type Tasks struct{}
 
 // rayactors
-type actors struct{}
+type Actors struct{}
 ```
 
 - Use the `// raytasks` comment to mark your Ray tasks struct

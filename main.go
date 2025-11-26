@@ -221,8 +221,8 @@ func (t *ParameterTypeConstraints) String() string {
 */
 const taskDefTpl = `
 {{.Doc}}
+// original task: [{{.ReceiverType}}.{{.FuncName}}]
 func {{.FuncName}} {{.TypeConstraints}} ( {{.ParamList}} ) *RemoteFunc[*Future{{.ResLen}}{{.ResTypes}}] {
-	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original task
 	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}})
 }
 `
@@ -232,16 +232,17 @@ type Actor{{.ActorName}} struct {
 	ray.ActorHandle
 }
 
+{{.Doc}}
+// original actor constructor: [{{.ReceiverType}}.{{.FuncName}}]
 func New{{.ActorName}}{{.TypeConstraints}}({{.ParamList}}) *RemoteActor[Actor{{.ActorName}}] {
-	_ = (actors).{{.ActorName}} // help you to findStruct the original actor constructor
 	return NewRemoteActor[Actor{{.ActorName}}]("{{.ActorName}}", {{.ArgsStatement}})
 }
 `
 
 const actorMethodDefTpl = `
 {{.Doc}}
+// original actor method: [{{.ReceiverType}}.{{.FuncName}}]
 func {{.ActorName}}_{{.FuncName}} {{.TypeConstraints}} (_actor *Actor{{.ActorName}}, {{.ParamList}}) *RemoteFunc[*Future{{.ResLen}}{{.ResTypes}}] {
-	_ = ({{.ReceiverType}}).{{.FuncName}}  // help you to findStruct the original actor method
 	return NewRemoteFunc[*Future{{.ResLen}}{{.ResTypes}}]("{{.FuncName}}", {{.ArgsStatement}}, &_actor.ActorHandle)
 }
 `
