@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/bytedance/gg/gslice"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -66,6 +67,21 @@ type Param struct {
 
 type Result struct {
 	Type string // format same as Param.Type
+}
+
+func (m Method) String() string {
+	params := make([]string, len(m.Params))
+	for i, p := range m.Params {
+		if m.IsVariadic && i == len(m.Params)-1 {
+			params[i] = fmt.Sprintf("%s ...%s", p.Name, p.Type)
+		} else {
+			params[i] = fmt.Sprintf("%s %s", p.Name, p.Type)
+		}
+	}
+	retruns := gslice.Map(m.Results, func(r Result) string {
+		return r.Type
+	})
+	return fmt.Sprintf("%s(%s) (%s)", m.Name, strings.Join(params, ", "), strings.Join(retruns, ", "))
 }
 
 // FindMethods finds all exported methods of the given struct name in the package.
@@ -152,8 +168,8 @@ func FindMethods(pkg *packages.Package, structName string, importStore *ImportSt
 	return methods
 }
 
-// 将 Go 类型名转换为更友好的标识符名称
-// 例如：[]T -> sliceOfT; *T -> pointerOfT; map[K]V -> mapK2V; [n]T -> arrNT; ...
+// Convert Go type names to more friendly identifier names
+// Examples: []T -> sliceOfT; *T -> pointerOfT; map[K]V -> mapK2V; [n]T -> arrNT; ...
 var (
 	arrayRegex = regexp.MustCompile(`\[(\d+)\]`)
 	mapRegex   = regexp.MustCompile(`map\[([^\]]+)\](.*)`)
@@ -180,19 +196,19 @@ func IdentifiableTypeName(typ string) string { // pure helper
 	return typ
 }
 
-// getTypeName 从 types.Type 变量中提取类型名 (pkgName.typeName)
-// 如果类型定义在 currentPkgPath, 则省略包名。
+// getTypeName extracts the type name (pkgName.typeName) from a types.Type variable.
+// If the type is defined in currentPkgPath, the package name is omitted.
 func getTypeName(typ types.Type, currentPkgPath string, importStore *ImportStore) string {
 	var typeName string
-	// 具名类型 (Named type)，唯一有显式包名的情况。
+	// Named type - the only case with an explicit package name.
 	if named, ok := typ.(*types.Named); ok {
-		obj := named.Obj() // 获取定义这个具名类型的 *types.TypeName 对象
+		obj := named.Obj() // Get the *types.TypeName object that defines this named type that defines this named type
 		if obj != nil {
-			// typeName 是这个类型的名称 (例如 "MyStruct", "Reader")
+			// typeName is the name of this type (e.g., "MyStruct", "Reader")
 			typeName = obj.Name()
-			// Package() 返回定义这个类型的包，如果类型是预声明的（如 int），则为 nil
+			// Package() returns the package that defines this type; nil for predeclared types (e.g., int)
 			if obj.Pkg() != nil {
-				packagePath := obj.Pkg().Path() // 包的导入路径 (例如 "fmt", "main")
+				packagePath := obj.Pkg().Path() // Package import path (e.g., "fmt", "main")
 				if packagePath != currentPkgPath {
 					pkgName := importStore.AddImport(packagePath)
 					typeName = pkgName + "." + typeName
@@ -202,36 +218,36 @@ func getTypeName(typ types.Type, currentPkgPath string, importStore *ImportStore
 		return typeName
 	}
 
-	// 其他类型的 *types.Type，它们本身没有包名，但有类型名。
-	// 对于这些类型，packagePath 将为空字符串。
+	// Other *types.Type variants that don't have package names but do have type names.
+	// For these types, packagePath will be an empty string.
 	switch t := typ.(type) {
 	case *types.Basic:
-		// 基本类型 (int, string, bool 等)
+		// Basic types (int, string, bool, etc.)
 		typeName = t.Name()
 		if t.Kind() == types.UnsafePointer {
 			typeName = importStore.AddImport("unsafe") + "." + typeName
 		}
 	case *types.Pointer:
-		// 指针类型 (*int, *MyStruct)
-		// 类型名是 "ptrTo" + 元素类型名
-		// 如果需要更精确的表示，可以递归调用 getPackageAndTypeName(t.Elem())
+		// Pointer types (*int, *MyStruct)
+		// Type name is "*" + element type name
+		// For more precise representation, can recursively call getPackageAndTypeName(t.Elem())
 		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = "*" + elemTypeName
 	case *types.Slice:
-		// 切片类型 ([]int, []MyStruct)
+		// Slice types ([]int, []MyStruct)
 		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = "[]" + elemTypeName
 	case *types.Array:
-		// 数组类型 ([N]int, [N]MyStruct)
+		// Array types ([N]int, [N]MyStruct)
 		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = fmt.Sprintf("[%d]%s", t.Len(), elemTypeName)
 	case *types.Map:
-		// 映射类型 (map[string]int)
+		// Map types (map[string]int)
 		keyTypeName := getTypeName(t.Key(), currentPkgPath, importStore)
 		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		typeName = fmt.Sprintf("map[%s]%s", keyTypeName, elemTypeName)
 	case *types.Chan:
-		// 通道类型 (chan int, chan<- bool)
+		// Channel types (chan int, chan<- bool)
 		elemTypeName := getTypeName(t.Elem(), currentPkgPath, importStore)
 		dir := ""
 		switch t.Dir() {
@@ -244,21 +260,21 @@ func getTypeName(typ types.Type, currentPkgPath string, importStore *ImportStore
 		}
 		typeName = dir + elemTypeName
 	case *types.Signature:
-		// 函数或方法签名类型 (func(int) string)
-		// 这通常只在需要打印完整的函数签名时有用。
-		// 对于包名和类型名，它本身通常不具有一个独立的“名称”。
-		// 如果需要表示，可以使用 t.String()。
+		// Function or method signature types (func(int) string)
+		// This is typically only useful when printing the complete function signature.
+		// For package and type names, it doesn't usually have an independent "name".
+		// Use t.String() if representation is needed.
 		typeName = t.String()
 	case *types.Struct:
-		// 结构体字面量类型 (struct { Field int })
-		// 类似于匿名结构体。
+		// Struct literal types (struct { Field int })
+		// Similar to anonymous structs.
 		typeName = t.String()
 	case *types.Interface:
-		// 接口字面量类型 (interface { Method() })
-		// 类似于匿名接口。
+		// Interface literal types (interface { Method() })
+		// Similar to anonymous interfaces.
 		typeName = t.String()
 	default:
-		// 对于其他未知或不常见的类型，使用其 String() 方法作为名称
+		// For other unknown or uncommon types, use their String() method as the name
 		typeName = typ.String()
 	}
 

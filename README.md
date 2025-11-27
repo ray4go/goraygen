@@ -37,8 +37,8 @@ type Tasks struct{}
 type Actors struct{}
 ```
 
-- Use the `// raytasks` comment to mark your Ray tasks struct
-- Use the `// rayactors` comment to mark your Ray actor factory struct
+- Use the `// raytasks` comment to mark your Ray task register struct
+- Use the `// rayactors` comment to mark your Ray actor register struct
 
 ### 2. Generate Wrapper Code
 
@@ -48,7 +48,7 @@ Run `goraygen` with the path to your GoRay application package:
 goraygen /path/to/your/package/
 ```
 
-This generates a `ray_workload_wrappers.go` file in the package directory containing type-safe wrappers for all Ray tasks and actors.
+This command generates a `ray_workload_wrappers.go` file in the package directory containing type-safe wrappers for all Ray tasks and actors.
 
 ### 3. Use Generated Wrappers
 
@@ -68,9 +68,9 @@ res, remainder, err := future.Get()
 
 For each ray task, a generated wrapper function is created. 
 
-`Remote()` call accepts `ray.Option`s and returns a `Future` object, which can be used to retrieve the result via `future.Get()`
+`Remote()` call accepts `ray.Option`s and returns a `Future` object, which can be used to retrieve the result via `future.Get()` method.
 
-The wrapper function signature matches the original task function, the wrapper function also accepts compatible `Future` parameters.
+The signature of wrapper function matches the original task function, the wrapper function also accepts compatible `Future` as parameters.
 
 **Ray Actor**
 
@@ -108,11 +108,11 @@ future := Counter_Incr(counter, 2).Remote()
 ### Notes
 
 - `goraygen` only generates wrappers for Ray tasks and actors defined in Golang, not for tasks or actors defined in Python.
-- The returned Future objects from wrapper remote call and `ray.Put()` can be passed as parameters to other wrapper remote calls.
-  The objectRef returned by `ray.RemoteCall` and `actor.RemoteCall` can't be used as parameters to wrapper remote calls.
-- `Cancel()` and `ray.Wait()` are not natively supported on Future types. Use `objectRef.Cancel()` and `ray.Wait()` with the underlying object references via `future.ObjectRef()`.
-- Variadic parameters are partially supported in wrapper functions. You can't pass mixed types in variadic parameters (i.e., both concrete values and Future objects).
-- Do not manually edit generated files. The generated `ray_workload_wrappers.go` file is overwritten on each run of `goraygen`.
+- The returned `Future` objects from wrapper remote call as well as `ray.Put()` can be passed as parameters to other wrapper remote calls.
+  The `ObjectRef` returned by `ray.RemoteCall` and `actor.RemoteCall` can't be used as parameters to wrapper remote calls.
+- `Cancel()` and `ray.Wait()` are not natively supported on `Future` types. Instead, get the underlying object references via `future.ObjectRef()` anc call `objectRef.Cancel()` and `ray.Wait()`.
+- Variadic parameters are partially supported in wrapper functions. You can't pass mixed types in variadic parameters (i.e., both concrete values and `Future` objects).
+- Do not manually edit generated files. The generated `ray_workload_wrappers.go` file will be overwritten on each run of `goraygen`.
 
 ## Examples
 
