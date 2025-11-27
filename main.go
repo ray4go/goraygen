@@ -35,6 +35,8 @@ const packageCommentsTPL = `
 `
 
 func main() {
+	log.SetFlags(0)
+	log.SetPrefix("[goraygen] ")
 	if len(os.Args) < 2 {
 		fmt.Printf("Usage: goraygen <package-path>\n")
 		os.Exit(1)
@@ -100,7 +102,7 @@ func (g *Generator) loadPackage(packagePath string) error {
 	}
 	g.pkg = pkgs[0]
 	if g.pkg.Errors != nil {
-		fmt.Printf("%d errors detected when load the package:\n", len(g.pkg.Errors))
+		log.Printf("[ERROR] %d errors detected when load the package:", len(g.pkg.Errors))
 		for _, e := range g.pkg.Errors {
 			log.Printf("- %v", e)
 		}
@@ -111,20 +113,20 @@ func (g *Generator) loadPackage(packagePath string) error {
 func (g *Generator) collectWorkloads() {
 	// tasks
 	if s := FindStruct(g.pkg, raytasksComment); s != nil {
-		fmt.Printf("Found raytasks struct: %s\n", s.Name.Name)
+		log.Printf("[INFO] Found raytasks struct: %s", s.Name.Name)
 		g.tasks = FindMethods(g.pkg, s.Name.Name, g.importStore)
 	} else {
-		fmt.Printf("No struct with '%s' comment found\n", raytasksComment)
+		log.Printf("[WARN] No struct with '%s' comment found", raytasksComment)
 	}
 	// actors
 	if s := FindStruct(g.pkg, rayactorsComment); s != nil {
-		fmt.Printf("Found rayactors struct: %s\n", s.Name.Name)
+		log.Printf("[INFO] Found rayactors struct: %s", s.Name.Name)
 		g.actorFactories = FindMethods(g.pkg, s.Name.Name, g.importStore)
 		g.actorFactories = gslice.Filter(g.actorFactories, func(m Method) bool {
 			return len(m.Results) > 0
 		})
 	} else {
-		fmt.Printf("No struct with '%s' comment found\n", rayactorsComment)
+		log.Printf("[WARN] No struct with '%s' comment found", rayactorsComment)
 	}
 }
 
@@ -136,7 +138,7 @@ func (g *Generator) collectActorMethods() {
 		actorTypeName := actorFactory.Results[0].Type
 		actorName := strings.TrimPrefix(actorTypeName, "*")
 		actorMethods := FindMethods(g.pkg, actorName, g.importStore)
-		fmt.Printf("Actor '%s' find %d methods\n", actorName, len(actorMethods))
+		log.Printf("[INFO] Actor '%s' found %d methods", actorName, len(actorMethods))
 		g.actor2Methods[actorFactory.Name] = actorMethods
 	}
 }
@@ -172,7 +174,7 @@ func (g *Generator) write(code, packagePath string) error {
 	_ = os.WriteFile("/tmp/out.go", []byte(code), 0o644) // for debug
 	formatted, err := format.Source([]byte(code))
 	if err != nil {
-		log.Printf("Warning: Could not format generated code: %v", err)
+		log.Printf("[WARN] Could not format generated code: %v", err)
 		formatted = []byte(code)
 	}
 	outputFile := filepath.Join(packagePath, generatedFileName)
@@ -183,7 +185,7 @@ func (g *Generator) write(code, packagePath string) error {
 	if err := os.WriteFile(outputFile, formatted, 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("Generated wrapper code is written to: %s\n", outputFile)
+	log.Printf("[INFO] Generated wrapper code is written to: %s", outputFile)
 	return nil
 }
 
